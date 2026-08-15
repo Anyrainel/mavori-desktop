@@ -6,7 +6,7 @@
 #   * Actions minutes are free on public repositories and metered on private
 #     ones — and macOS bills at a 10x multiplier, which is most of a desktop
 #     release. Running here costs nothing against the private allowance.
-#   * `GITHUB_TOKEN` already has write access to this repository, so publishing
+#   * GITHUB_TOKEN already has write access to this repository, so publishing
 #     the release needs no extra credential. Only reading the source does.
 #
 # The source repositories stay private and are checked out with a read-only
@@ -55,6 +55,8 @@ jobs:
             name: Windows
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.name }}
+    outputs:
+      version: ${{ steps.version.outputs.value }}
     steps:
       - name: Check out the shell
         uses: actions/checkout@v4
@@ -82,21 +84,14 @@ jobs:
         with:
           version: 10
 
-      # The client install is by far the longest step; its lockfile is the only
-      # thing that invalidates the store.
+      # The client install is by far the longest step, and its lockfile is the
+      # only thing that invalidates the store.
       - name: Cache the pnpm store
         uses: actions/cache@v4
         with:
           path: ~/.pnpm-store
           key: pnpm-${{ runner.os }}-${{ hashFiles('WSPal/pnpm-lock.yaml') }}
           restore-keys: pnpm-${{ runner.os }}-
-
-      - name: Cache Metro's transform cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ runner.temp }}/metro-cache
-          key: metro-${{ runner.os }}-${{ hashFiles('WSPal/pnpm-lock.yaml') }}
-          restore-keys: metro-${{ runner.os }}-
 
       - name: Install client dependencies
         working-directory: WSPal
@@ -113,6 +108,14 @@ jobs:
       - name: Verify the shell
         working-directory: desktop
         run: npm test
+
+      - name: Read the version being released
+        id: version
+        working-directory: desktop
+        shell: bash
+        run: |
+          version=$(node -p "require('./apps/desktop/package.json').version")
+          echo "value=$version" >> "$GITHUB_OUTPUT"
 
       - name: Build, sign, and publish a draft release
         working-directory: desktop
@@ -135,26 +138,25 @@ jobs:
 
   provenance:
     needs: build
-    if: always() && contains(needs.build.result, 'success')
+    if: needs.build.result == 'success'
     runs-on: ubuntu-latest
     steps:
+      # Targets the release by name rather than "the newest one", so a stale
+      # draft left over from an earlier attempt cannot be edited by mistake.
       - name: Record what the draft was built from
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: v${{ needs.build.outputs.version }}
           DESKTOP_REF: ${{ inputs.desktop_ref }}
           CLIENT_REF: ${{ inputs.client_ref }}
-        # A draft is invisible to the updater, so it can be inspected, installed
-        # by hand, and discarded. Publishing it is what ships it to everyone.
+        shell: bash
         run: |
-          tag=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --json tagName \
-            --jq '.[0].tagName')
-          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --notes "$(cat <<EOF
-          Built from \`$DESKTOP_REF\` (shell) and \`$CLIENT_REF\` (client).
-
-          macOS builds are signed with a Developer ID and notarized. Windows is
-          unsigned, so SmartScreen warns until the binary earns reputation.
-
-          This release is a draft: installed apps do not see it until it is
-          published.
-          EOF
-          )"
+          {
+            echo "Built from shell $DESKTOP_REF and client $CLIENT_REF."
+            echo
+            echo "macOS is signed with a Developer ID and notarized. Windows is unsigned,"
+            echo "so SmartScreen warns until the binary earns reputation."
+            echo
+            echo "This is a draft: installed apps do not see it until it is published."
+          } > notes.md
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file notes.md

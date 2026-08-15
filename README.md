@@ -17,9 +17,10 @@ because it is the same account against the same service. The desktop app adds a
 real window, a system tray, keyboard shortcuts for every surface, native
 notifications, and updates that install themselves.
 
-macOS builds are signed with a Developer ID and notarized. Windows builds are
-not yet code-signed, so SmartScreen shows a warning on first download —
-"More info" then "Run anyway".
+Windows builds are not yet code-signed, so SmartScreen shows a warning on first
+download — "More info" then "Run anyway". macOS builds are not published yet;
+they arrive once the app is signed with an Apple Developer ID, without which
+Gatekeeper refuses to open them at all.
 
 ## About this repository
 

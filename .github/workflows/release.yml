@@ -1,0 +1,160 @@
+# Builds the Mavori desktop app and publishes a draft release here.
+#
+# This workflow lives in the PUBLIC releases repository rather than beside the
+# code, for two reasons:
+#
+#   * Actions minutes are free on public repositories and metered on private
+#     ones — and macOS bills at a 10x multiplier, which is most of a desktop
+#     release. Running here costs nothing against the private allowance.
+#   * `GITHUB_TOKEN` already has write access to this repository, so publishing
+#     the release needs no extra credential. Only reading the source does.
+#
+# The source repositories stay private and are checked out with a read-only
+# token. Build logs on a public repository are public: nothing here prints
+# source, and the config it does print (Supabase URL, API origin) is the same
+# config every browser already receives from app.mavori.ai.
+#
+# Secrets:
+#   SOURCE_REPO_TOKEN               read-only contents on WSPal + WSPal-desktop
+#   APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID
+#   CSC_LINK, CSC_KEY_PASSWORD      base64 Developer ID .p12, and its password
+#
+# Windows ships unsigned — no Authenticode certificate — so SmartScreen warns
+# on download until the binary earns reputation.
+
+name: Build desktop release
+
+on:
+  workflow_dispatch:
+    inputs:
+      desktop_ref:
+        description: Ref of WSPal-desktop (the shell) to build
+        default: main
+        required: true
+      client_ref:
+        description: Ref of WSPal (the client) to export the renderer from
+        default: main
+        required: true
+
+# Only people with write access can dispatch, and there is no trigger a fork
+# can reach, so the source token is never exposed to an outside contributor.
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      # One platform failing should not throw away a good build of the other:
+      # electron-builder appends to the same draft, and a rerun fills the gap.
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            name: macOS
+          - os: windows-latest
+            name: Windows
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.name }}
+    steps:
+      - name: Check out the shell
+        uses: actions/checkout@v4
+        with:
+          repository: Anyrainel/WSPal-desktop
+          ref: ${{ inputs.desktop_ref }}
+          token: ${{ secrets.SOURCE_REPO_TOKEN }}
+          path: desktop
+
+      # Beside the shell, because scripts/build-renderer.mjs looks for the
+      # client at ../WSPal by default.
+      - name: Check out the client
+        uses: actions/checkout@v4
+        with:
+          repository: Anyrainel/WSPal
+          ref: ${{ inputs.client_ref }}
+          token: ${{ secrets.SOURCE_REPO_TOKEN }}
+          path: WSPal
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      # The client install is by far the longest step; its lockfile is the only
+      # thing that invalidates the store.
+      - name: Cache the pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.pnpm-store
+          key: pnpm-${{ runner.os }}-${{ hashFiles('WSPal/pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
+      - name: Cache Metro's transform cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/metro-cache
+          key: metro-${{ runner.os }}-${{ hashFiles('WSPal/pnpm-lock.yaml') }}
+          restore-keys: metro-${{ runner.os }}-
+
+      - name: Install client dependencies
+        working-directory: WSPal
+        run: pnpm install --frozen-lockfile
+
+      - name: Install shell dependencies
+        working-directory: desktop
+        run: npm ci
+
+      - name: Export the Mavori client
+        working-directory: desktop
+        run: npm run build:renderer
+
+      - name: Verify the shell
+        working-directory: desktop
+        run: npm test
+
+      - name: Build, sign, and publish a draft release
+        working-directory: desktop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_LINK: ${{ matrix.os == 'macos-14' && secrets.CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ matrix.os == 'macos-14' && secrets.CSC_KEY_PASSWORD || '' }}
+        run: npm run build -w @mavori/desktop -- --publish always
+
+      # asar packing, the custom scheme's registration and the bundle's
+      # root-absolute asset paths only meet each other inside a real package.
+      # A build that white-screens passes every other gate in the repo.
+      - name: Boot the packaged app
+        if: matrix.os == 'windows-latest'
+        working-directory: desktop
+        run: node apps/desktop/scripts/smoke-packaged.mjs
+
+  provenance:
+    needs: build
+    if: always() && contains(needs.build.result, 'success')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Record what the draft was built from
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DESKTOP_REF: ${{ inputs.desktop_ref }}
+          CLIENT_REF: ${{ inputs.client_ref }}
+        # A draft is invisible to the updater, so it can be inspected, installed
+        # by hand, and discarded. Publishing it is what ships it to everyone.
+        run: |
+          tag=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --json tagName \
+            --jq '.[0].tagName')
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --notes "$(cat <<EOF
+          Built from \`$DESKTOP_REF\` (shell) and \`$CLIENT_REF\` (client).
+
+          macOS builds are signed with a Developer ID and notarized. Windows is
+          unsigned, so SmartScreen warns until the binary earns reputation.
+
+          This release is a draft: installed apps do not see it until it is
+          published.
+          EOF
+          )"

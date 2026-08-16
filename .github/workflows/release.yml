@@ -9,13 +9,13 @@
 #   * GITHUB_TOKEN already has write access to this repository, so publishing
 #     the release needs no extra credential. Only reading the source does.
 #
-# The source repositories stay private and are checked out with a read-only
+# The source repository stays private and is checked out with a read-only
 # token. Build logs on a public repository are public: nothing here prints
 # source, and the config it does print (Supabase URL, API origin) is the same
 # config every browser already receives from app.mavori.ai.
 #
 # Secrets:
-#   SOURCE_REPO_TOKEN               read-only contents on WSPal + WSPal-desktop
+#   SOURCE_REPO_TOKEN               read-only contents on Anyrainel/WSPal
 #   APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID
 #   CSC_LINK, CSC_KEY_PASSWORD      base64 Developer ID .p12, and its password
 #
@@ -36,12 +36,8 @@ on:
         # by default would only produce an artifact nobody can install.
         default: windows
         required: true
-      desktop_ref:
-        description: Ref of WSPal-desktop (the shell) to build
-        default: main
-        required: true
-      client_ref:
-        description: Ref of WSPal (the client) to export the renderer from
+      ref:
+        description: Ref of Anyrainel/WSPal to build
         default: main
         required: true
 
@@ -66,23 +62,14 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.value }}
     steps:
-      - name: Check out the shell
-        uses: actions/checkout@v4
-        with:
-          repository: Anyrainel/WSPal-desktop
-          ref: ${{ inputs.desktop_ref }}
-          token: ${{ secrets.SOURCE_REPO_TOKEN }}
-          path: desktop
-
-      # Beside the shell, because scripts/build-renderer.mjs looks for the
-      # client at ../WSPal by default.
-      - name: Check out the client
-        uses: actions/checkout@v4
+      # One checkout: the shell and the client it wraps are the same commit, so
+      # a release names a single SHA rather than a pair that has to be
+      # correlated afterwards.
+      - uses: actions/checkout@v4
         with:
           repository: Anyrainel/WSPal
-          ref: ${{ inputs.client_ref }}
+          ref: ${{ inputs.ref }}
           token: ${{ secrets.SOURCE_REPO_TOKEN }}
-          path: WSPal
 
       - uses: actions/setup-node@v4
         with:
@@ -90,43 +77,35 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          version: 10
+          version: 11
 
-      # The client install is by far the longest step, and its lockfile is the
-      # only thing that invalidates the store.
       - name: Cache the pnpm store
         uses: actions/cache@v4
         with:
           path: ~/.pnpm-store
-          key: pnpm-${{ runner.os }}-${{ hashFiles('WSPal/pnpm-lock.yaml') }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: pnpm-${{ runner.os }}-
 
-      - name: Install client dependencies
-        working-directory: WSPal
+      # The desktop app and everything it imports; the mobile-only native
+      # toolchain is not needed to export the web bundle.
+      - name: Install
         run: pnpm install --frozen-lockfile
 
-      - name: Install shell dependencies
-        working-directory: desktop
-        run: npm ci
-
-      - name: Export the Mavori client
-        working-directory: desktop
-        run: npm run build:renderer
+      - name: Export the client into the shell
+        run: pnpm build:desktop-renderer
 
       - name: Verify the shell
-        working-directory: desktop
-        run: npm test
+        run: pnpm --filter @wspal/desktop test
 
       - name: Read the version being released
         id: version
-        working-directory: desktop
         shell: bash
         run: |
           version=$(node -p "require('./apps/desktop/package.json').version")
           echo "value=$version" >> "$GITHUB_OUTPUT"
 
       - name: Build, sign, and publish a draft release
-        working-directory: desktop
+        working-directory: apps/desktop
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -136,16 +115,13 @@ jobs:
           CSC_LINK: ${{ matrix.os == 'macos-14' && secrets.CSC_LINK || '' }}
           CSC_KEY_PASSWORD: ${{ matrix.os == 'macos-14' && secrets.CSC_KEY_PASSWORD || '' }}
         # Notarization is a request to Apple that needs credentials; asking
-        # without them fails the build outright rather than degrading. Turn it
-        # off when there is no certificate, so a macOS run before the Developer
-        # ID exists still produces something (Gatekeeper will refuse it, but
-        # the build is exercised).
+        # without them fails the build outright rather than degrading.
         run: |
           if [ -n "$CSC_LINK" ] && [ -n "$APPLE_ID" ]; then
-            npm run build -w @mavori/desktop -- --publish always
+            pnpm build -- --publish always
           else
             echo "No Apple credentials — building unsigned, notarization off."
-            npm run build -w @mavori/desktop -- --publish always -c.mac.notarize=false
+            pnpm build -- --publish always -c.mac.notarize=false
           fi
 
       # asar packing, the custom scheme's registration and the bundle's
@@ -153,8 +129,7 @@ jobs:
       # A build that white-screens passes every other gate in the repo.
       - name: Boot the packaged app
         if: matrix.os == 'windows-latest'
-        working-directory: desktop
-        run: node apps/desktop/scripts/smoke-packaged.mjs
+        run: pnpm --filter @wspal/desktop smoke:packaged
 
   provenance:
     needs: build
@@ -167,12 +142,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: v${{ needs.build.outputs.version }}
-          DESKTOP_REF: ${{ inputs.desktop_ref }}
-          CLIENT_REF: ${{ inputs.client_ref }}
+          SOURCE_REF: ${{ inputs.ref }}
         shell: bash
         run: |
           {
-            echo "Built from shell $DESKTOP_REF and client $CLIENT_REF."
+            echo "Built from Anyrainel/WSPal @ $SOURCE_REF."
             echo
             echo "macOS is signed with a Developer ID and notarized. Windows is unsigned,"
             echo "so SmartScreen warns until the binary earns reputation."

@@ -30,7 +30,7 @@ on:
       platforms:
         description: Which platforms to build
         type: choice
-        options: [windows, macos, both]
+        options: [windows, macos, linux, both, all]
         # macOS is opt-in until the Apple Developer ID exists. An unsigned,
         # un-notarized .dmg is one Gatekeeper refuses to open, so building it
         # by default would only produce an artifact nobody can install.
@@ -54,13 +54,16 @@ jobs:
       fail-fast: false
       matrix:
         os: >-
-          ${{ fromJSON(inputs.platforms == 'both' && '["macos-14","windows-latest"]'
+          ${{ fromJSON(inputs.platforms == 'all' && '["macos-14","windows-latest","ubuntu-latest"]'
+              || inputs.platforms == 'linux' && '["ubuntu-latest"]'
+              || inputs.platforms == 'both' && '["macos-14","windows-latest"]'
               || inputs.platforms == 'macos' && '["macos-14"]'
               || '["windows-latest"]') }}
     runs-on: ${{ matrix.os }}
-    name: ${{ matrix.os == 'macos-14' && 'macOS' || 'Windows' }}
+    name: ${{ matrix.os == 'macos-14' && 'macOS' || matrix.os == 'ubuntu-latest' && 'Linux' || 'Windows' }}
     outputs:
       version: ${{ steps.version.outputs.value }}
+      source_sha: ${{ steps.version.outputs.source_sha }}
     steps:
       # One checkout: the shell and the client it wraps are the same commit, so
       # a release names a single SHA rather than a pair that has to be
@@ -103,12 +106,14 @@ jobs:
         run: |
           version=$(node -p "require('./apps/desktop/package.json').version")
           echo "value=$version" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Build, sign, and publish a draft release
         working-directory: apps/desktop
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUILD_OS: ${{ matrix.os }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -117,10 +122,14 @@ jobs:
         # Notarization is a request to Apple that needs credentials; asking
         # without them fails the build outright rather than degrading.
         run: |
-          if [ -n "$CSC_LINK" ] && [ -n "$APPLE_ID" ]; then
+          if [ "$BUILD_OS" = "macos-14" ]; then
+            if [ -z "$CSC_LINK" ] || [ -z "$APPLE_ID" ] || [ -z "$APPLE_APP_SPECIFIC_PASSWORD" ] || [ -z "$APPLE_TEAM_ID" ]; then
+              echo "macOS requires Developer ID signing and notarization credentials." >&2
+              exit 1
+            fi
             pnpm build -- --publish always
           else
-            echo "No Apple credentials — building unsigned, notarization off."
+            echo "Building $BUILD_OS without Apple notarization."
             pnpm build -- --publish always -c.mac.notarize=false
           fi
 
@@ -128,8 +137,12 @@ jobs:
       # root-absolute asset paths only meet each other inside a real package.
       # A build that white-screens passes every other gate in the repo.
       - name: Boot the packaged app
-        if: matrix.os == 'windows-latest'
+        if: matrix.os != 'ubuntu-latest'
         run: pnpm --filter @wspal/desktop smoke:packaged
+
+      - name: Boot the Linux packaged app
+        if: matrix.os == 'ubuntu-latest'
+        run: xvfb-run --auto-servernum pnpm --filter @wspal/desktop smoke:packaged
 
   provenance:
     needs: build
@@ -142,14 +155,20 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: v${{ needs.build.outputs.version }}
-          SOURCE_REF: ${{ inputs.ref }}
+          SOURCE_REF: ${{ needs.build.outputs.source_sha }}
+          PLATFORMS: ${{ inputs.platforms }}
         shell: bash
         run: |
           {
             echo "Built from Anyrainel/WSPal @ $SOURCE_REF."
             echo
-            echo "macOS is signed with a Developer ID and notarized. Windows is unsigned,"
-            echo "so SmartScreen warns until the binary earns reputation."
+            echo "Platforms: $PLATFORMS."
+            if [ "$PLATFORMS" = "macos" ] || [ "$PLATFORMS" = "both" ] || [ "$PLATFORMS" = "all" ]; then
+              echo "macOS is signed with a Developer ID and notarized."
+            fi
+            if [ "$PLATFORMS" = "windows" ] || [ "$PLATFORMS" = "both" ] || [ "$PLATFORMS" = "all" ]; then
+              echo "Windows is unsigned; SmartScreen may warn on download."
+            fi
             echo
             echo "This is a draft: installed apps do not see it until it is published."
           } > notes.md

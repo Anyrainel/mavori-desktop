@@ -140,7 +140,10 @@ jobs:
 
       - name: Boot the Linux packaged app
         if: matrix.os == 'ubuntu-latest'
-        run: xvfb-run --auto-servernum pnpm --filter @wspal/desktop smoke:packaged
+        run: |
+          sudo chown root:root apps/desktop/release/linux-unpacked/chrome-sandbox
+          sudo chmod 4755 apps/desktop/release/linux-unpacked/chrome-sandbox
+          xvfb-run --auto-servernum pnpm --filter @wspal/desktop smoke:packaged
 
   provenance:
     needs: build

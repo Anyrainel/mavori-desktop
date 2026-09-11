@@ -125,10 +125,10 @@ jobs:
               echo "macOS requires Developer ID signing and notarization credentials." >&2
               exit 1
             fi
-            pnpm build -- --publish always
+            pnpm build --publish always
           else
             echo "Building $BUILD_OS without Apple notarization."
-            pnpm build -- --publish always -c.mac.notarize=false
+            pnpm build --publish always -c.mac.notarize=false
           fi
 
       # asar packing, the custom scheme's registration and the bundle's

@@ -31,10 +31,8 @@ on:
         description: Which platforms to build
         type: choice
         options: [windows, macos, linux, both, all]
-        # macOS is opt-in until the Apple Developer ID exists. An unsigned,
-        # un-notarized .dmg is one Gatekeeper refuses to open, so building it
-        # by default would only produce an artifact nobody can install.
-        default: windows
+        # All supported installers are required by the release finalizer.
+        default: all
         required: true
       ref:
         description: Ref of Anyrainel/WSPal to build

@@ -52,13 +52,13 @@ jobs:
       fail-fast: false
       matrix:
         os: >-
-          ${{ fromJSON(inputs.platforms == 'all' && '["macos-14","windows-latest","ubuntu-latest"]'
+          ${{ fromJSON(inputs.platforms == 'all' && '["macos-26","windows-latest","ubuntu-latest"]'
               || inputs.platforms == 'linux' && '["ubuntu-latest"]'
-              || inputs.platforms == 'both' && '["macos-14","windows-latest"]'
-              || inputs.platforms == 'macos' && '["macos-14"]'
+              || inputs.platforms == 'both' && '["macos-26","windows-latest"]'
+              || inputs.platforms == 'macos' && '["macos-26"]'
               || '["windows-latest"]') }}
     runs-on: ${{ matrix.os }}
-    name: ${{ matrix.os == 'macos-14' && 'macOS' || matrix.os == 'ubuntu-latest' && 'Linux' || 'Windows' }}
+    name: ${{ matrix.os == 'macos-26' && 'macOS' || matrix.os == 'ubuntu-latest' && 'Linux' || 'Windows' }}
     outputs:
       version: ${{ steps.version.outputs.value }}
       source_sha: ${{ steps.version.outputs.source_sha }}
@@ -77,6 +77,17 @@ jobs:
           node-version: 22
 
       - uses: pnpm/action-setup@v4
+
+      - name: Verify the macOS icon compiler
+        if: matrix.os == 'macos-26'
+        shell: bash
+        run: |
+          xcodebuild -version
+          xcode_major=$(xcodebuild -version | awk '/^Xcode / { split($2, version, "."); print version[1] }')
+          if [ "$xcode_major" -lt 26 ]; then
+            echo "The desktop .icon asset requires Xcode 26 or newer." >&2
+            exit 1
+          fi
 
       - name: Cache the pnpm store
         uses: actions/cache@v4
@@ -113,12 +124,12 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          CSC_LINK: ${{ matrix.os == 'macos-14' && secrets.CSC_LINK || '' }}
-          CSC_KEY_PASSWORD: ${{ matrix.os == 'macos-14' && secrets.CSC_KEY_PASSWORD || '' }}
+          CSC_LINK: ${{ matrix.os == 'macos-26' && secrets.CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ matrix.os == 'macos-26' && secrets.CSC_KEY_PASSWORD || '' }}
         # Notarization is a request to Apple that needs credentials; asking
         # without them fails the build outright rather than degrading.
         run: |
-          if [ "$BUILD_OS" = "macos-14" ]; then
+          if [ "$BUILD_OS" = "macos-26" ]; then
             if [ -z "$CSC_LINK" ] || [ -z "$APPLE_ID" ] || [ -z "$APPLE_APP_SPECIFIC_PASSWORD" ] || [ -z "$APPLE_TEAM_ID" ]; then
               echo "macOS requires Developer ID signing and notarization credentials." >&2
               exit 1

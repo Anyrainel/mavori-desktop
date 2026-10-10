@@ -58,10 +58,9 @@ Keep Mavori in its own window, with a system tray, keyboard shortcuts, native no
 
 | Platform | Download |
 | --- | --- |
-| Windows | [Windows installer (.exe)](https://github.com/Anyrainel/mavori-desktop/releases/latest/download/Mavori-Setup-Windows.exe) |
-| macOS · Apple silicon | [Apple silicon installer (.dmg)](https://github.com/Anyrainel/mavori-desktop/releases/latest/download/Mavori-Setup-Mac-arm64.dmg) |
-| macOS · Intel | [Intel installer (.dmg)](https://github.com/Anyrainel/mavori-desktop/releases/latest/download/Mavori-Setup-Mac-x64.dmg) |
-| Linux | [Linux AppImage](https://github.com/Anyrainel/mavori-desktop/releases/latest/download/Mavori-Setup-Linux.AppImage) |
+| Windows | [Windows installer (.exe)](https://github.com/Anyrainel/mavori-desktop/releases/latest/download/Mavori_Installer_Windows_x64.exe) |
+| macOS · Apple silicon | [Apple silicon installer (.dmg)](https://github.com/Anyrainel/mavori-desktop/releases/latest/download/Mavori_Installer_macOS_arm64.dmg) |
+| Linux | [Linux AppImage](https://github.com/Anyrainel/mavori-desktop/releases/latest/download/Mavori_Linux_x64.AppImage) |
 
 ### Get started
 
@@ -75,7 +74,7 @@ Mavori uses hosted services and requires an internet connection. Access to indiv
 <summary>Installation notes</summary>
 
 - **Windows:** The installer is currently unsigned, so Windows SmartScreen may display a warning. Check that your download came from this repository's official release page before proceeding.
-- **macOS:** Choose Apple silicon for an M-series Mac, or Intel for an Intel-based Mac. Open the DMG and drag Mavori into Applications.
+- **macOS:** The Mac download supports Apple silicon (M-series). Intel Macs can use the web app. Open the DMG and drag Mavori into Applications.
 - **Linux:** Make the AppImage executable in your file manager's permissions settings, then launch it.
 
 </details>
@@ -93,3 +92,17 @@ This is Mavori's public home on GitHub for desktop downloads, release notes, and
 ---
 
 <p align="center"><a href="https://mavori.ai/download"><strong>Bring Mavori to your desktop →</strong></a></p>
+
+## Writing release notes
+
+Build desktop release requires Markdown notes before a build starts. Write two
+or three verified user-visible changes and explain where to use them. Include
+update instructions and links to [Download Mavori](https://mavori.ai/download),
+[installation help](https://mavori.ai/docs/desktop), and
+[contact support](https://mavori.ai/contact). Keep notes under 6000 characters.
+Never include private repository names, commit hashes, build checks, or draft
+and publishing instructions. The workflow validates notes before building and
+writes the same supplied notes after all platform checks pass. Build provenance
+belongs in operator records. Historical notes are retained in `release-notes/`.
+
+Run `node --test scripts/release-notes.test.mjs` to check the publication policy.

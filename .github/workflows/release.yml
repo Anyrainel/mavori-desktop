@@ -27,6 +27,10 @@ name: Build desktop release
 on:
   workflow_dispatch:
     inputs:
+      release_notes:
+        description: User-facing changes, update directions, and download/help/support links (Markdown)
+        type: string
+        required: true
       platforms:
         description: Which platforms to build
         type: choice
@@ -61,11 +65,18 @@ jobs:
     name: ${{ matrix.os == 'macos-26' && 'macOS' || matrix.os == 'ubuntu-latest' && 'Linux' || 'Windows' }}
     outputs:
       version: ${{ steps.version.outputs.value }}
-      source_sha: ${{ steps.version.outputs.source_sha }}
     steps:
-      # One checkout: the shell and the client it wraps are the same commit, so
-      # a release names a single SHA rather than a pair that has to be
-      # correlated afterwards.
+      - uses: actions/checkout@v4
+        with:
+          path: release-automation
+
+      - name: Validate user-facing release notes
+        env:
+          RELEASE_NOTES: ${{ inputs.release_notes }}
+        run: |
+          node --test release-automation/scripts/release-notes.test.mjs
+          node release-automation/scripts/release-notes.mjs
+
       - uses: actions/checkout@v4
         with:
           repository: Anyrainel/WSPal
@@ -113,7 +124,6 @@ jobs:
         run: |
           version=$(node -p "require('./apps/desktop/package.json').version")
           echo "value=$version" >> "$GITHUB_OUTPUT"
-          echo "source_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Build, sign, and publish a draft release
         working-directory: apps/desktop
@@ -154,32 +164,18 @@ jobs:
           sudo chmod 4755 apps/desktop/release/linux-unpacked/chrome-sandbox
           xvfb-run --auto-servernum pnpm --filter @wspal/desktop smoke:packaged
 
-  provenance:
+  release-notes:
     needs: build
     if: needs.build.result == 'success'
     runs-on: ubuntu-latest
     steps:
-      # Targets the release by name rather than "the newest one", so a stale
-      # draft left over from an earlier attempt cannot be edited by mistake.
-      - name: Record what the draft was built from
+      - uses: actions/checkout@v4
+
+      - name: Write user-facing draft notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: v${{ needs.build.outputs.version }}
-          SOURCE_REF: ${{ needs.build.outputs.source_sha }}
-          PLATFORMS: ${{ inputs.platforms }}
-        shell: bash
+          RELEASE_NOTES: ${{ inputs.release_notes }}
         run: |
-          {
-            echo "Built from Anyrainel/WSPal @ $SOURCE_REF."
-            echo
-            echo "Platforms: $PLATFORMS."
-            if [ "$PLATFORMS" = "macos" ] || [ "$PLATFORMS" = "both" ] || [ "$PLATFORMS" = "all" ]; then
-              echo "macOS is signed with a Developer ID and notarized."
-            fi
-            if [ "$PLATFORMS" = "windows" ] || [ "$PLATFORMS" = "both" ] || [ "$PLATFORMS" = "all" ]; then
-              echo "Windows is unsigned; SmartScreen may warn on download."
-            fi
-            echo
-            echo "This is a draft: installed apps do not see it until it is published."
-          } > notes.md
+          node scripts/release-notes.mjs notes.md
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file notes.md
